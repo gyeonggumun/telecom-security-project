@@ -390,10 +390,17 @@ a.tool-card:hover { border-color: var(--signal); }
 .user-menu a:focus-visible, .user-menu button:focus-visible { outline: 2px solid var(--signal); outline-offset: -2px; }
 .user-menu__meta { display: block; padding: 0.55rem 1rem 0.45rem; font-size: 0.78rem; color: var(--ink-soft); }
 
-/* 상단 바의 접속 시간 표시 */
+/* 상단 바의 남은 접속 시간 */
 .session-clock { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.78rem;
-  color: var(--ink-soft); white-space: nowrap; cursor: default; }
+  color: var(--ink-soft); white-space: nowrap; position: relative; }
 .session-clock__time { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink); }
+.session-clock__extend { padding: 0.2rem 0.45rem; border: 1px solid var(--line); border-radius: 0.35rem;
+  background: var(--surface); color: var(--ink); font: inherit; cursor: pointer; }
+.session-clock__extend:focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; }
+.session-clock__extend:disabled { opacity: 0.6; cursor: default; }
+.session-clock__error { position: absolute; z-index: 20; right: 0; top: calc(100% + 0.3rem); width: max-content;
+  max-width: 16rem; white-space: normal; background: var(--surface); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 0.35rem; padding: 0.4rem 0.55rem; }
 @media (max-width: 720px) { .session-clock__label { display: none; } }
 .user-menu__sep { height: 1px; background: var(--line); margin: 0.3rem 0; }
 /* 관리자 상단(어두운 배경): 버튼 글자만 밝게, 펼친 메뉴는 흰 배경 + 진한 글자 */

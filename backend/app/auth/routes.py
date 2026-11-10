@@ -1,14 +1,15 @@
 """인증 API (docs/contracts/auth-api.md)
 
-POST /api/auth/register, /login, /logout · GET /api/auth/me
+POST /api/auth/register, /login, /logout, /session/extend · GET /api/auth/me
 + 프로필: PATCH /api/auth/me, POST /api/auth/password, POST /api/auth/deactivate
 CSRF 토큰은 로그인 응답과 GET /api/auth/me 의 data.csrf_token 으로 받고, 상태 변경 요청에 X-CSRF-Token 헤더로 보낸다.
 """
-from flask import Blueprint, current_app, g
+from flask import Blueprint, g
 
+from ..core.errors import ApiError
 from ..core.permissions import current_user, json_and_origin_required, login_required
 from ..core.responses import ok
-from ..core.sessions import clear_session_cookie, create_session, set_session_cookie
+from ..core.sessions import clear_session_cookie, create_session, extend_session, session_deadline, set_session_cookie
 from ..core.validation import body
 from ..extensions import db
 from ..models.base import utcnow
@@ -18,10 +19,13 @@ bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 
 def _session_dict(session) -> dict:
-    """로그인 경과 시간 표시용. 화면은 last_seen_at+idle 을 다음 자동 로그아웃 예정 시각으로 보여준다."""
-    return {"created_at": session.created_at.isoformat() + "Z",
-            "last_seen_at": session.last_seen_at.isoformat() + "Z",
-            "idle_minutes": current_app.config["SESSION_IDLE_MINUTES"]}
+    return {
+        "created_at": session.created_at.isoformat() + "Z",
+        "last_seen_at": session.last_seen_at.isoformat() + "Z",
+        "expires_at": session_deadline(session).isoformat() + "Z",
+        "max_expires_at": session.expires_at.isoformat() + "Z",
+        "server_time": utcnow().isoformat() + "Z",
+    }
 
 
 @bp.post("/register")
@@ -51,6 +55,15 @@ def logout():
     resp, status = ok({"logged_out": True})
     clear_session_cookie(resp)
     return resp, status
+
+
+@bp.post("/session/extend")
+@login_required
+def renew():
+    session = extend_session(g.auth_session)
+    if session is None:
+        raise ApiError("UNAUTHORIZED", "세션이 만료되었습니다. 다시 로그인하세요.", 401)
+    return ok({"session": _session_dict(session)})
 
 
 @bp.get("/me")

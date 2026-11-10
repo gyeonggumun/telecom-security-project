@@ -1,7 +1,8 @@
 """MySQL 공유 서버 세션 (통합 기준 7절, docs/contracts/auth-api.md).
 
 - 쿠키: __Host-telecom_session, Secure / HttpOnly / SameSite=Lax / Path=/ / Domain 없음
-- 유휴 30분, 절대 8시간. 로그아웃·비밀번호 변경·탈퇴 시 DB에서 폐기
+- 로그인·수동 연장 후 60분, 최초 로그인부터 최대 8시간
+- 로그아웃·비밀번호 변경·탈퇴 시 DB에서 폐기
 - API Pod 메모리에는 아무것도 저장하지 않는다 → 어느 Pod로 요청이 가도 같은 결과
 """
 import hashlib
@@ -14,9 +15,6 @@ from flask import current_app, g, request
 from ..extensions import db
 from ..models import AuthSession, User
 from ..models.base import utcnow
-
-TOUCH_INTERVAL = timedelta(seconds=60)  # last_seen_at 갱신 주기 (매 요청 쓰기 방지)
-
 
 def token_hash(raw: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()
@@ -51,11 +49,25 @@ def revoke_user_sessions(user_id: int):
         .update({AuthSession.revoked_at: now}, synchronize_session=False)
 
 
+def session_deadline(session: AuthSession):
+    window = timedelta(minutes=current_app.config["SESSION_WINDOW_MINUTES"])
+    return min(session.last_seen_at + window, session.expires_at)
+
+
 def _valid(session: AuthSession, now) -> bool:
-    if session.revoked_at is not None or session.expires_at <= now:
-        return False
-    idle = timedelta(minutes=current_app.config["SESSION_IDLE_MINUTES"])
-    return session.last_seen_at + idle > now
+    return session.revoked_at is None and session_deadline(session) > now
+
+
+def extend_session(session: AuthSession):
+    # 같은 세션의 연장과 폐기가 겹쳐도 최신 DB 상태에서 만료를 다시 확인한다.
+    locked = AuthSession.query.filter_by(id=session.id).populate_existing().with_for_update().one_or_none()
+    now = utcnow()
+    if locked is None or not _valid(locked, now):
+        db.session.rollback()
+        return None
+    locked.last_seen_at = now
+    db.session.commit()
+    return locked
 
 
 def load_session():
@@ -72,9 +84,6 @@ def load_session():
     user = db.session.get(User, session.user_id)
     if user is None or not user.is_active or user.locked_at is not None:
         return
-    if now - session.last_seen_at >= TOUCH_INTERVAL:
-        session.last_seen_at = now
-        db.session.commit()
     g.auth_session, g.current_user = session, user
 
 

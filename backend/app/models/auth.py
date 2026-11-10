@@ -19,7 +19,7 @@ class AuthSession(db.Model):
     # CSRF 토큰: 세션 쿠키 없이는 쓸모가 없고, 화면 새로고침 후 다시 내려주기 위해 저장한다
     csrf_token: Mapped[str] = mapped_column(String(64), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
-    last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime, nullable=False)  # 로그인 또는 마지막 수동 연장
     expires_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)  # 절대 만료
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

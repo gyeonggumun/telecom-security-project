@@ -1,6 +1,7 @@
 import logging
 from datetime import timedelta
 
+from app.core import sessions
 from app.extensions import db
 from app.models import AuthSession, User
 from tests.conftest import HOST, csrf, login, logout, new_client
@@ -96,19 +97,58 @@ def test_csrf_required_for_state_change(client):
     assert client.get("/api/auth/me").status_code == 401  # DB 세션 폐기됨
 
 
-def test_idle_timeout_30min(client, app):
-    login(client, "alice@test.local")
-    s = AuthSession.query.one()
-    s.last_seen_at -= timedelta(minutes=31)
-    db.session.commit()
+def test_session_expires_after_one_hour_even_with_activity(client, monkeypatch):
+    now = sessions.utcnow()
+    monkeypatch.setattr(sessions, "utcnow", lambda: now)
+    session = login(client, "alice@test.local").json["data"]["session"]
+    assert session["expires_at"] == (now + timedelta(hours=1)).isoformat() + "Z"
+
+    now += timedelta(minutes=45)
+    res = client.get("/api/auth/me")
+    assert res.status_code == 200
+    assert res.json["data"]["session"]["expires_at"] == session["expires_at"]
+
+    now += timedelta(minutes=15)
     assert client.get("/api/auth/me").status_code == 401
+    assert client.post("/api/auth/session/extend", headers=csrf(client)).status_code == 401
 
 
-def test_absolute_timeout_8h(client, app):
-    login(client, "alice@test.local")
-    s = AuthSession.query.one()
-    s.expires_at -= timedelta(hours=8, minutes=1)
+def test_session_extension_requires_login_and_csrf(client, app, monkeypatch):
+    path = "/api/auth/session/extend"
+    assert client.post(path).status_code == 401
+    now = sessions.utcnow()
+    monkeypatch.setattr(sessions, "utcnow", lambda: now)
+    original = login(client, "alice@test.local").json["data"]["session"]
+    now += timedelta(minutes=50)
+    assert client.post(path).status_code == 403
+    assert client.get("/api/auth/me").json["data"]["session"]["expires_at"] == original["expires_at"]
+
+    res = client.post(path, headers=csrf(client))
+    assert res.status_code == 200
+    renewed = res.json["data"]["session"]
+    assert renewed["expires_at"] == (now + timedelta(hours=1)).isoformat() + "Z"
+    assert renewed["max_expires_at"] == original["max_expires_at"]
+
+    now += timedelta(minutes=10)
+    other = new_client(app)
+    other.set_cookie(COOKIE, client.get_cookie(COOKIE, domain=HOST).value, domain=HOST, secure=True)
+    assert other.get("/api/auth/me").json["data"]["session"]["expires_at"] == renewed["expires_at"]
+    now += timedelta(minutes=50)
+    assert other.get("/api/auth/me").status_code == 401
+
+
+def test_session_extension_stops_at_absolute_timeout(client, monkeypatch):
+    now = sessions.utcnow()
+    monkeypatch.setattr(sessions, "utcnow", lambda: now)
+    original = login(client, "alice@test.local").json["data"]["session"]
+    now += timedelta(hours=7, minutes=30)
+    AuthSession.query.one().last_seen_at = now - timedelta(minutes=45)
     db.session.commit()
+
+    renewed = client.post("/api/auth/session/extend", headers=csrf(client))
+    assert renewed.status_code == 200
+    assert renewed.json["data"]["session"]["expires_at"] == original["max_expires_at"]
+    now += timedelta(minutes=30)
     assert client.get("/api/auth/me").status_code == 401
 
 
